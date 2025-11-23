@@ -1,64 +1,86 @@
 import csv
+import json
+from io import TextIOWrapper
 import logging
-import multiprocessing
 import os
 import time
 import xml.etree.ElementTree as ET
 from typing import Generator, Tuple
 
+CSV_COLUMNS = ["applicationNumber","abstractContent"]
+METADATA_KEYS = ["inventionTitle","ipcNumber","applicationDate","applicantName"]
 
 class Parser:
     logger = None
-    return_queue = None
     parsed_set = set()
 
-    datadir = None
+    metadata : dict = {}
+    csv_path : str|None = None
+    json_path : str|None = None
+    
+    countCutoff : int|None = None
 
     def __init__(
         self,
-        return_queue: multiprocessing.Queue[ET.ElementTree],
         logger: logging.Logger,
         output_dir: str,
     ):
-        self.return_queue = return_queue
         self.logger = logger
-        self.datadir = output_dir
+        self.csv_path = os.path.join(output_dir,"data.csv")
+        self.json_path = os.path.join(output_dir,"metadata.json")
+        
+        self.metadata = json.load(open(self.json_path,"r",encoding="utf-8")) if os.path.exists(self.json_path) else {}
+        for k in self.metadata.keys():
+            self.parsed_set.add(k)
+        
+        print(self.parsed_set)
 
-        self.csv_writer = csv.writer(
-            open(
-                os.path.join(self.datadir, "parsed_data.csv"),
-                mode="w",
-                newline="",
-                encoding="utf-8",
-            )
-        )
-
-    def init_csv(self, path: str, headers: list[str]):
-        with open(path, mode="w", newline="", encoding="utf-8") as file:
+    def init_csv(self, headers: list[str]):
+        with open(self.csv_path, mode="w", newline="", encoding="cp949") as file:
             writer = csv.writer(file)
             writer.writerow(headers)
 
-    def append(self, path: str, data: dict[str, str]):
-        if not os.path.exists(path):
-            with open(path, mode="w", newline="", encoding="utf-8") as file:
-                writer = csv.writer(file)
-                writer.writerow([data.keys()])
+    def parse(self, xml_tree: ET.ElementTree) -> bool:
+        """Parse XML and return True if cutoff is met, False otherwise"""
+        # Check if cutoff is already met before parsing
+        if self.check_cutoff():
+            self.logger.info("Cutoff already met before parsing, skipping")
+            return True
+            
+        if not os.path.exists(self.csv_path):
+            self.init_csv(CSV_COLUMNS)
 
-        with open(path, mode="a", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow(data.values())
-
-    def try_parse(self):
-        while True:
-            if self.return_queue.empty():
-                time.sleep(0.2)
-                continue
-
-            xml_tree = self.return_queue.get()
+        with open(self.csv_path,"a",encoding="cp949",newline="") as csv_file:
+            csv_writer = csv.writer(csv_file)
+            
+            has_data = False
             for appNum, metadata, abstract in self._datagen(xml_tree):
+                has_data = True
+                
                 if appNum in self.parsed_set:
+                    print(f"Skipping duplicate: {appNum}")
                     continue
+                
+                # Check if cutoff is met before adding record
+                if self.check_cutoff():
+                    with open(self.json_path,"w",encoding="utf-8") as json_file:
+                        json.dump(self.metadata, json_file, ensure_ascii=False, indent=4)
+                    return True
+                
+                csv_writer.writerow([appNum, abstract])
+                self.metadata[appNum] = metadata
                 self.parsed_set.add(appNum)
+                print(appNum)
+
+        with open(self.json_path,"w",encoding="utf-8") as json_file:
+            json.dump(self.metadata, json_file, ensure_ascii=False, indent=4)
+        
+        # If no data was processed, treat as cutoff met
+        if not has_data:
+            self.logger.info("No data in fetch result, treating as cutoff met")
+            return True
+            
+        return False
 
     def _datagen(
         self, xml: ET.ElementTree
@@ -68,13 +90,7 @@ class Parser:
 
         for item in items.findall("item"):
             application_number = item.findtext("applicationNumber")
-            parsed_data = {
-                "inventionTitle": item.findtext("inventionTitle"),
-                "ipcNumber": item.findtext("ipcNumber"),
-                "applicationDate": item.findtext("applicationDate"),
-                "applicantName": item.findtext("applicantName"),
-                "applicationDate": item.findtext("applicationDate"),
-            }
+            parsed_data = {key:item.findtext(key) for key in METADATA_KEYS}
             abstract = item.findtext("astrtCont", "")
 
             for k, v in parsed_data.items():
@@ -82,3 +98,17 @@ class Parser:
                     parsed_data[k] = v.split("|") if "|" in v else [v]
 
             yield application_number, parsed_data, abstract
+
+    def set_cutoff(self, countCutoff: int|None):
+        self.countCutoff = countCutoff
+        self.logger.info(f"Cutoff set - countCutoff: {countCutoff}")
+
+    def check_cutoff(self) -> bool:
+        """Check if any cutoff condition is met"""
+        # Check count cutoff
+        if self.countCutoff is not None:
+            if len(self.parsed_set) >= self.countCutoff:
+                self.logger.info(f"Count cutoff reached: {len(self.parsed_set)} records")
+                return True
+        
+        return False

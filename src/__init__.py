@@ -1,3 +1,4 @@
 from . import *
-from fetcher import Fetcher
-from parser import Parser
+from .config_reader import ConfigReader
+from .fetcher import Fetcher
+from .parser import Parser
