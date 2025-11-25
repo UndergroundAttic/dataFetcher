@@ -2,12 +2,12 @@ import requests
 
 
 import logging
-import os
-import time
 import xml.etree.ElementTree as ET
 
 
-KIPRIS_URL = "http://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getAdvancedSearch"
+KIPRIS_URL = (
+    "http://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getAdvancedSearch"
+)
 
 PARAM_AVAIL = [
     "word",
@@ -19,9 +19,10 @@ PARAM_AVAIL = [
     "lastvalue",
     "applicationDate",
     "ServiceKey",
+    "query",
 ]
 
-PAGE_SIZE = 10
+PAGE_SIZE = 500
 
 
 class Fetcher:
@@ -81,3 +82,55 @@ class Fetcher:
 
     def reset(self):
         self.page_index = 1
+
+
+class QueryFetcher(Fetcher):
+    def fetch(self) -> dict:
+        self.logger.info("Starting fetch operation")
+        self.logger.info(f"PAGE: {self.page_index}")
+
+        query = self.params.get("query", "")
+        patent = self.params.get("patent", True)
+        utility = self.params.get("utility", False)
+        lastvalue = self.params.get("lastvalue", "R")
+
+        clsExpression = "((P<IN>CLS))" if patent and not utility else None
+        lstExpression = f"(({lastvalue}<IN>LST))"
+
+        prefixExpression = ""
+        if clsExpression:
+            prefixExpression += clsExpression
+            prefixExpression += "*"
+
+        prefixExpression += lstExpression
+
+        try:
+            res = requests.post(
+                "https://www.kipris.or.kr/kpat/resulta.do",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                    "Referer": "https://www.kipris.or.kr/search/searchResult.do",
+                    "Origin": "https://www.kipris.or.kr",
+                },
+                data={
+                    "expression": query,
+                    "queryText": query,
+                    "numPerPage": PAGE_SIZE,
+                    "numPageLinks": "2",
+                    "currentPage": self.page_index,
+                    "sortField": "RANK",
+                    "sortState": "Desc",
+                    "prefixExpression": prefixExpression,
+                },
+            )
+            res.raise_for_status()
+        except Exception as e:
+            self.logger.error(f"HTTP error occurred: {e}")
+            raise
+
+        if res.json().get("resultCode", "") != "00":
+            raise Exception(f"KIPRIS API request failed")
+
+        self.page_index += 1
+        return res.json()
