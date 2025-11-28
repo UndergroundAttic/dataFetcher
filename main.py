@@ -50,6 +50,12 @@ if __name__ == "__main__":
 
     logger = setup_logger()
 
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if not os.path.exists(config_dir):
+        os.makedirs(output_dir)
+
     config_reader = ConfigReader(config_dir)
     search_fetcher = Fetcher(KEY, logger)
     query_fetcher = QueryFetcher(KEY, logger)
@@ -57,6 +63,10 @@ if __name__ == "__main__":
     query_parser = QueryParser(logger, output_dir)
 
     for name, config in config_reader.config_gen():
+        if f"{name}_metadata.json" in os.listdir(output_dir):
+            logger.info(f"Skipping config '{name}' as it has already been processed.")
+            continue
+
         # Set params for each config
         if config.get("mode", "request") == "request":
             fetcher = search_fetcher
