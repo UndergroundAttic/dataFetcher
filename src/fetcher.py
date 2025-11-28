@@ -1,3 +1,4 @@
+import json
 import requests
 
 
@@ -40,7 +41,8 @@ class Fetcher:
         self.service_key = ServiceKey
         self.logger = logger
 
-        self.set_params(**kwargs)
+        if kwargs:
+            self.set_params(**kwargs)
 
     def fetch(self) -> ET.ElementTree:
         self.logger.info("Starting fetch operation")
@@ -130,6 +132,12 @@ class QueryFetcher(Fetcher):
             raise
 
         if res.json().get("resultCode", "") != "00":
+            json.dump(
+                res.json(),
+                open("error_response.json", "w"),
+                ensure_ascii=False,
+                indent=4,
+            )
             raise Exception(f"KIPRIS API request failed")
 
         self.page_index += 1
